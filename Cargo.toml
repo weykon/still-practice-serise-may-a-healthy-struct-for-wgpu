@@ -1,0 +1,13 @@
+[package]
+name = "still-wgpu-healthy-struct"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+bytemuck = { version="1.16.1", features=["derive"]}
+glob = "0.3.1"
+pollster = "0.3.0"
+wgpu = "0.20.1"
+winit = "0.30.3"
+cgmath = "0.18"
