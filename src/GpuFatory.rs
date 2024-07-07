@@ -1,13 +1,17 @@
 use std::borrow::Cow;
 
 use wgpu::{
+    util::{DeviceExt, RenderEncoder},
     BindGroup, BindGroupDescriptor, BindGroupLayout, BlendState, Buffer, BufferBinding,
     BufferDescriptor, BufferUsages, FragmentState, FrontFace, PipelineCompilationOptions,
     PipelineLayout, PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology,
     RenderPipeline, RenderPipelineDescriptor, VertexState,
 };
 
-use crate::GfxState;
+use crate::{
+    camera::{Camera, CameraUniform},
+    GfxState,
+};
 pub struct GpuFactory {
     pub bind_group: Vec<BindGroup>,
     pub bind_group_layout: Vec<BindGroupLayout>,
@@ -17,10 +21,13 @@ pub struct GpuFactory {
     pub uniform_buffer: Vec<Buffer>,
     pub pipeline_layout: Vec<PipelineLayout>,
     pub shader: Vec<wgpu::ShaderModule>,
+    pub camera_uniform: CameraUniform,
+    pub camera_buffer: Buffer,
+    pub camera_bind_group: BindGroup,
 }
 
 impl GpuFactory {
-    pub fn new(app: &GfxState) {
+    pub fn new(app: &GfxState) -> Self {
         let code = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/asset/sky.wgsl"));
         let shader = app
             .device
@@ -73,11 +80,58 @@ impl GpuFactory {
                 }),
             }],
         });
+
+        // camera
+        let camera = Camera {
+            // position the camera 1 unit up and 2 units back
+            // +z is out of the screen
+            eye: (0.0, 1.0, 2.0).into(),
+            // have it look at the origin
+            target: (0.0, 0.0, 0.0).into(),
+            // which way is "up"
+            up: cgmath::Vector3::unit_y(),
+            aspect: app.surface_config.width as f32 / app.surface_config.height as f32,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+        };
+        let mut camera_uniform = CameraUniform::new();
+        camera_uniform.update_view_proj(&camera);
+        let camera_buffer = app
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Camera Buffer"),
+                contents: bytemuck::cast_slice(&[camera_uniform]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let camera_bind_group_layout =
+            app.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                    label: Some("camera_bind_group_layout"),
+                });
+        let camera_bind_group = app.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+            label: Some("camera_bind_group"),
+        });
         let pipeline_layout = app
             .device
             .create_pipeline_layout(&PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[&bind_group_layout],
+                bind_group_layouts: &[&bind_group_layout, &camera_bind_group_layout],
                 push_constant_ranges: &[],
             });
         let pipeline = app
@@ -112,6 +166,22 @@ impl GpuFactory {
                 multiview: None,
             });
 
+        Self {
+            bind_group: vec![bind_group],
+            bind_group_layout: vec![bind_group_layout],
+            pipeline: vec![pipeline],
+            vertex_buffer: vec![],
+            index_buffer: vec![],
+            camera_uniform,
+            camera_buffer,
+            camera_bind_group,
+            uniform_buffer: vec![uniform_buffer],
+            pipeline_layout: vec![pipeline_layout],
+            shader: vec![shader],
+        }
+    }
+
+    pub fn render(&self, app: &GfxState) {
         let mut encoder = app
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -137,8 +207,14 @@ impl GpuFactory {
                 })],
                 ..Default::default()
             });
-            render_pass.set_pipeline(&pipeline);
-            render_pass.set_bind_group(0, &bind_group, &[]);
+            for pipeline in self.pipeline.iter() {
+                render_pass.set_pipeline(&pipeline);
+            }
+            for (index, bind_group) in self.bind_group.iter().enumerate() {
+                render_pass.set_bind_group(index as u32, &bind_group, &[]);
+            }
+
+            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
 
             render_pass.draw(0..6, 0..1);
             println!("Drawing");
