@@ -1,7 +1,7 @@
 use std::sync::Arc;
 mod GpuFatory;
 use anyhow::{anyhow, Context};
-use camera::{Camera, CameraUniform};
+use camera::{Camera, CameraController, CameraUniform};
 use wgpu::{
     util::DeviceExt, Adapter, Color, LoadOp, RenderPassColorAttachment, RenderPassDescriptor,
     StoreOp,
@@ -11,6 +11,7 @@ use winit::{
     dpi::PhysicalSize,
     event::{self, WindowEvent},
     event_loop::{self, ActiveEventLoop, EventLoop},
+    keyboard::PhysicalKey,
     window::{Window, WindowAttributes},
 };
 use GpuFatory::GpuFactory;
@@ -29,6 +30,8 @@ struct GfxState {
     pub queue: wgpu::Queue,
     pub surface_config: wgpu::SurfaceConfiguration,
     pub gpu_factory: Option<GpuFactory>,
+    pub camera_controller: CameraController,
+    pub camera: Camera,
 }
 
 enum EntryOn {
@@ -74,6 +77,12 @@ impl ApplicationHandler for EntryOn {
                 }
                 WindowEvent::RedrawRequested { .. } => {
                     println!("RedrawRequested");
+                    app.camera_controller.update_camera(&mut app.camera);
+                    app.gpu_factory
+                        .as_mut()
+                        .unwrap()
+                        .camera_uniform
+                        .update_view_proj(&app.camera);
                     app.gpu_factory.as_ref().unwrap().render(&app);
                 }
                 WindowEvent::KeyboardInput {
@@ -82,6 +91,9 @@ impl ApplicationHandler for EntryOn {
                     is_synthetic,
                 } => {
                     println!("KeyboardInput: {:?}", event.physical_key);
+                    if app.camera_controller.process_events(&event) {
+                        app.window.request_redraw();
+                    }
                 }
                 WindowEvent::CloseRequested => {
                     println!("CloseRequested");
@@ -138,11 +150,29 @@ impl GfxState {
         surface.configure(&device, &surface_config);
         println!("Gfx State Ready");
 
+        // camera
+        let camera = Camera {
+            // position the camera 1 unit up and 2 units back
+            // +z is out of the screen
+            eye: (0.0, 1.0, 2.0).into(),
+            // have it look at the origin
+            target: (0.0, 0.0, 0.0).into(),
+            // which way is "up"
+            up: cgmath::Vector3::unit_y(),
+            aspect: surface_config.width as f32 / surface_config.height as f32,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+        };
+        let camera_controller = CameraController::new(10.);
+
         Self {
             window,
             device,
+            camera_controller,
             surface,
             queue,
+            camera,
             surface_config,
             gpu_factory: None,
         }

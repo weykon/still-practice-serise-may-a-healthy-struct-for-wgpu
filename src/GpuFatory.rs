@@ -81,22 +81,8 @@ impl GpuFactory {
             }],
         });
 
-        // camera
-        let camera = Camera {
-            // position the camera 1 unit up and 2 units back
-            // +z is out of the screen
-            eye: (0.0, 1.0, 2.0).into(),
-            // have it look at the origin
-            target: (0.0, 0.0, 0.0).into(),
-            // which way is "up"
-            up: cgmath::Vector3::unit_y(),
-            aspect: app.surface_config.width as f32 / app.surface_config.height as f32,
-            fovy: 45.0,
-            znear: 0.1,
-            zfar: 100.0,
-        };
         let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update_view_proj(&camera);
+        camera_uniform.update_view_proj(&app.camera);
         let camera_buffer = app
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -219,6 +205,11 @@ impl GpuFactory {
             render_pass.draw(0..6, 0..1);
             println!("Drawing");
         };
+        app.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_uniform]),
+        );
 
         let command_buffer = encoder.finish();
         app.queue.submit(Some(command_buffer));
